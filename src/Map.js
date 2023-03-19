@@ -24,22 +24,35 @@ const boundingCoords = {
 //   eastLon: mapCentre.lon + 0.1
 // };
 
-function getGridColour(southernLatitude, westernLongitude, stations, rivers, pedestrianAreas) {
-  const hasNearbyStations = stations.some((station) => {
-    return station.lat >= southernLatitude - stationMaxDistance && station.lat < southernLatitude + (stationMaxDistance + gridSize) && station.lon >= westernLongitude - stationMaxDistance && station.lon < westernLongitude + (stationMaxDistance + gridSize); // Not perfect as a station might be just outside the edge of a rectangle
+// @TODO Do I need to filter on lat if I've already done it in filterNearLat ?
+function hasNearbyX(list, southernLatitude, westernLongitude, maxDistance) {
+  return list.some((item) => {
+    return item.lat >= southernLatitude - maxDistance && item.lat < southernLatitude + (maxDistance + gridSize) && item.lon >= westernLongitude - maxDistance && item.lon < westernLongitude + (maxDistance + gridSize); // Not perfect as item might be just outside the edge of a rectangle
   });
+}
+
+function filterNearLat(list, southernLatitude, maxDistance) {
+  return list.filter((item) => {
+    return item.lat >= southernLatitude - (maxDistance + (2 * gridSize)) && item.lat < southernLatitude + (maxDistance + (3 * gridSize));
+  });
+}
+
+function fetchJson(feature) {
+  if (feature.slice(0, 3) === 'way') {
+    return fetch(`https://www.overpass-api.de/api/interpreter?data=[out:json];${feature}(${boundingCoords.southLat},${boundingCoords.westLon},${boundingCoords.northLat},${boundingCoords.eastLon});out%20meta;`).then((response) => response.json());
+  }
+  return fetch(`https://www.overpass-api.de/api/interpreter?data=[out:json];${feature}(${boundingCoords.southLat},${boundingCoords.westLon},${boundingCoords.northLat},${boundingCoords.eastLon});(._;>;);out%20meta;`).then((response) => response.json());
+}
+
+function getGridColour(southernLatitude, westernLongitude, stations, rivers, pedestrianAreas) {
+  const hasNearbyStations = hasNearbyX(stations, southernLatitude, westernLongitude, stationMaxDistance);
 
   if (!hasNearbyStations) {
     return '#ff0000';
   }
 
-  const hasNearbyPedAreas = pedestrianAreas.some((ped) => {
-    return ped.lat >= southernLatitude - pedMaxDistance && ped.lat < southernLatitude + (pedMaxDistance + gridSize) && ped.lon >= westernLongitude - pedMaxDistance && ped.lon < westernLongitude + (pedMaxDistance + gridSize); // Not perfect as a station might be just outside the edge of a rectangle
-  });
-
-  const hasNearbyRivers = rivers.some((rivers) => {
-    return rivers.lat >= southernLatitude - riverMaxDistance && rivers.lat < southernLatitude + (riverMaxDistance + gridSize) && rivers.lon >= westernLongitude - riverMaxDistance && rivers.lon < westernLongitude + (riverMaxDistance + gridSize); // Not perfect as a station might be just outside the edge of a rectangle
-  });
+  const hasNearbyPedAreas = hasNearbyX(pedestrianAreas, southernLatitude, westernLongitude, pedMaxDistance);
+  const hasNearbyRivers = hasNearbyX(rivers, southernLatitude, westernLongitude, riverMaxDistance);
 
   if (hasNearbyPedAreas && hasNearbyRivers) {
     return '#00ff00';
@@ -52,24 +65,6 @@ function getGridColour(southernLatitude, westernLongitude, stations, rivers, ped
   return '#ff9933';
 }
 
-function getPedestrianAreasNearThisLat(pedestrianAreas, southernLatitude) {
-  return pedestrianAreas.filter((ped) => {
-    return ped.lat >= southernLatitude - (pedMaxDistance + (2 * gridSize)) && ped.lat < southernLatitude + (pedMaxDistance + (3 * gridSize));
-  });
-}
-
-function getStationsNearThisLat(stations, southernLatitude) {
-  return stations.filter((station) => {
-    return station.lat >= southernLatitude - (stationMaxDistance + (2 * gridSize)) && station.lat < southernLatitude + (stationMaxDistance + (3 * gridSize));
-  });
-}
-
-function getRiversNearThisLat(rivers, southernLatitude) {
-  return rivers.filter((rivers) => {
-    return rivers.lat >= southernLatitude - (riverMaxDistance + (2 * gridSize)) && rivers.lat < southernLatitude + (riverMaxDistance + (3 * gridSize));
-  });
-}
-
 function Map() {
   const grid = [];
   const markers = [];
@@ -80,9 +75,9 @@ function Map() {
   useEffect(() => {
     (async () => {
       const [stationsData, riversData, pedestrianAreaData] = await Promise.all([
-        fetch(`https://www.overpass-api.de/api/interpreter?data=[out:json];node[railway=station](${boundingCoords.southLat},${boundingCoords.westLon},${boundingCoords.northLat},${boundingCoords.eastLon});out%20meta;`).then((response) => response.json()),
-        fetch(`https://www.overpass-api.de/api/interpreter?data=[out:json];way[waterway=river](${boundingCoords.southLat},${boundingCoords.westLon},${boundingCoords.northLat},${boundingCoords.eastLon});(._;>;);out%20meta;`).then((response) => response.json()),
-        fetch(`https://www.overpass-api.de/api/interpreter?data=[out:json];area[highway=pedestrian](${boundingCoords.southLat},${boundingCoords.westLon},${boundingCoords.northLat},${boundingCoords.eastLon});(._;>;);out%20meta;`).then((response) => response.json())
+        fetchJson('node[railway=station]'),
+        fetchJson('way[waterway=river]'),
+        fetchJson('area[highway=pedestrian]'),
       ]);
       const goodStations = stationsData.elements.filter(station => station.tags?.usage !== 'tourism');
       const goodPedestrianAreas = pedestrianAreaData.elements.filter(ped => ped.tags?.area === 'yes');
@@ -96,9 +91,9 @@ function Map() {
 
   if (stations && rivers && pedestrianAreas) {
     for (let southernLatitude = boundingCoords.southLat; southernLatitude < boundingCoords.northLat; southernLatitude += gridSize) {
-      const stationsNearThisLat = getStationsNearThisLat(stations, southernLatitude); // Narrow down the number of stations to be iterated
-      const riversNearThisLat = getRiversNearThisLat(rivers, southernLatitude); // Narrow down the number of rivers to be iterated
-      const pedestrianAreasNearThisLat = getPedestrianAreasNearThisLat(pedestrianAreas, southernLatitude); // Narrow down the number of rivers to be iterated
+      const stationsNearThisLat = filterNearLat(stations, southernLatitude, stationMaxDistance); // Narrow down the number of stations to be iterated
+      const riversNearThisLat = filterNearLat(rivers, southernLatitude, riverMaxDistance); // Narrow down the number of rivers to be iterated
+      const pedestrianAreasNearThisLat = filterNearLat(pedestrianAreas, pedMaxDistance); // Narrow down the number of rivers to be iterated
       for (let westernLongitude = boundingCoords.westLon; westernLongitude < boundingCoords.eastLon; westernLongitude += gridSize) {
         const colour = getGridColour(southernLatitude, westernLongitude, stationsNearThisLat, riversNearThisLat, pedestrianAreasNearThisLat);
         grid.push(<Rectangle key={`${southernLatitude}-${westernLongitude}`}
