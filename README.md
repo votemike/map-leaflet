@@ -1,9 +1,5 @@
-Pubs
 Airports not too far away  
-Recent property prices  
-Pedestrianised High Streets
-
-
+Recent property prices
 
 
 Later:  
